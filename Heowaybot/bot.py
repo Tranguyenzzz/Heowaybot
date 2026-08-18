@@ -213,4 +213,4 @@ async def top(interaction: discord.Interaction):
 # CHẠY BOT (Thay TOKEN của bạn vào đây)
 # =========================================================
 import os
-bot.run("BOT_TOKEN"))
+bot.run(os.getenv("BOT_TOKEN"))

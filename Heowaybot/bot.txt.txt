@@ -1,0 +1,691 @@
+import discord
+from discord import app_commands
+from discord.ext import commands
+import sqlite3
+import random
+import asyncio
+import os
+import re
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+PREFIX = "!"
+TIME_LIMIT = 10
+
+# =========================================================
+# DISCORD
+# =========================================================
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(
+    command_prefix=PREFIX,
+    intents=intents
+)
+
+# =========================================================
+# DATABASE
+# =========================================================
+
+db = sqlite3.connect("noitu.db")
+cursor = db.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS players (
+    user_id TEXT PRIMARY KEY,
+    name TEXT,
+    xp INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    games INTEGER DEFAULT 0
+)
+""")
+
+db.commit()
+
+
+def create_player(user):
+    cursor.execute(
+        "SELECT user_id FROM players WHERE user_id = ?",
+        (str(user.id),)
+    )
+
+    if cursor.fetchone() is None:
+        cursor.execute(
+            """
+            INSERT INTO players
+            (user_id, name, xp, wins, games)
+            VALUES (?, ?, 0, 0, 0)
+            """,
+            (str(user.id), user.display_name)
+        )
+
+        db.commit()
+
+
+def add_xp(user, amount):
+    create_player(user)
+
+    cursor.execute(
+        """
+        UPDATE players
+        SET xp = xp + ?, name = ?
+        WHERE user_id = ?
+        """,
+        (amount, user.display_name, str(user.id))
+    )
+
+    db.commit()
+
+
+def add_win(user):
+    create_player(user)
+
+    cursor.execute(
+        """
+        UPDATE players
+        SET wins = wins + 1,
+            games = games + 1,
+            name = ?
+        WHERE user_id = ?
+        """,
+        (user.display_name, str(user.id))
+    )
+
+    db.commit()
+
+
+def add_game(user):
+    create_player(user)
+
+    cursor.execute(
+        """
+        UPDATE players
+        SET games = games + 1,
+            name = ?
+        WHERE user_id = ?
+        """,
+        (user.display_name, str(user.id))
+    )
+
+    db.commit()
+
+
+def get_player(user):
+    create_player(user)
+
+    cursor.execute(
+        """
+        SELECT xp, wins, games
+        FROM players
+        WHERE user_id = ?
+        """,
+        (str(user.id),)
+    )
+
+    return cursor.fetchone()
+
+
+def get_level(xp):
+    """
+    Cứ mỗi 100 XP lên 1 level.
+    """
+
+    return xp // 100 + 1
+
+
+def get_xp_to_next_level(xp):
+    level = get_level(xp)
+    next_xp = level * 100
+
+    return next_xp - xp
+
+
+# =========================================================
+# TỪ ĐIỂN NỐI TỪ
+# =========================================================
+
+WORDS_FILE = "noitu_words.txt"
+
+
+def normalize(text):
+    text = text.lower().strip()
+
+    # Xóa ký tự đặc biệt
+    text = re.sub(
+        r"[^a-zA-ZÀ-ỹĐđ\s]",
+        "",
+        text
+    )
+
+    # Xóa khoảng trắng thừa
+    text = " ".join(text.split())
+
+    return text
+
+
+def load_words():
+
+    if not os.path.exists(WORDS_FILE):
+        print(
+            "⚠️ Không tìm thấy noitu_words.txt"
+        )
+
+        return []
+
+    words = set()
+
+    with open(
+        WORDS_FILE,
+        "r",
+        encoding="utf-8"
+    ) as file:
+
+        for line in file:
+
+            word = normalize(line)
+
+            if len(word.split()) >= 2:
+                words.add(word)
+
+    print(
+        f"📚 Đã tải {len(words)} cụm từ."
+    )
+
+    return list(words)
+
+
+WORDS = load_words()
+
+
+def get_last_word(text):
+
+    parts = text.split()
+
+    if not parts:
+        return ""
+
+    return parts[-1]
+
+
+def find_word(required_word, used):
+
+    choices = []
+
+    for word in WORDS:
+
+        if word in used:
+            continue
+
+        parts = word.split()
+
+        if not parts:
+            continue
+
+        if parts[0] == required_word:
+            choices.append(word)
+
+    if not choices:
+        return None
+
+    return random.choice(choices)
+
+
+# =========================================================
+# GAME
+# =========================================================
+
+games = {}
+
+
+def make_game(channel_id):
+
+    return {
+        "used": set(),
+        "last_word": "",
+        "current_user": None,
+        "timer_task": None,
+        "active": True
+    }
+
+
+async def timeout_game(channel):
+
+    channel_id = channel.id
+
+    if channel_id not in games:
+        return
+
+    game = games[channel_id]
+
+    await channel.send(
+        "⏰ **Hết 10 giây!**\n"
+        f"Không ai nối được với **{game['last_word']}**.\n"
+        "🏁 Game kết thúc!"
+    )
+
+    del games[channel_id]
+
+
+# =========================================================
+# TIMER
+# =========================================================
+
+async def start_timer(channel):
+
+    await asyncio.sleep(TIME_LIMIT)
+
+    if channel.id not in games:
+        return
+
+    game = games[channel.id]
+
+    await channel.send(
+        "⏰ **HẾT GIỜ!**\n"
+        f"Không nối được với **{game['last_word']}**.\n"
+        "🏁 Game kết thúc!"
+    )
+
+    del games[channel.id]
+
+
+# =========================================================
+# BOT
+# =========================================================
+
+@bot.event
+async def on_ready():
+
+    print(
+        f"✅ Đăng nhập: {bot.user}"
+    )
+
+    try:
+
+        synced = await bot.tree.sync()
+
+        print(
+            f"🔄 Đã sync {len(synced)} slash command."
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Sync lỗi: {e}"
+        )
+
+
+# =========================================================
+# /NOITU
+# =========================================================
+
+@bot.tree.command(
+    name="noitu",
+    description="Bắt đầu trò chơi nối từ"
+)
+async def noitu(interaction: discord.Interaction):
+
+    channel = interaction.channel
+
+    if channel.id in games:
+
+        await interaction.response.send_message(
+            "⚠️ Kênh này đang có một game!"
+        )
+
+        return
+
+    if not WORDS:
+
+        await interaction.response.send_message(
+            "❌ Chưa có dữ liệu từ điển!"
+        )
+
+        return
+
+    first = random.choice(WORDS)
+
+    game = make_game(channel.id)
+
+    game["used"].add(first)
+    game["last_word"] = get_last_word(first)
+
+    games[channel.id] = game
+
+    await interaction.response.send_message(
+        "🎮 **NỐI TỪ BẮT ĐẦU!**\n\n"
+        f"🤖 Bot: **{first}**\n"
+        f"👉 Từ cần nối: **{game['last_word']}**\n\n"
+        f"⏱️ Bạn có **{TIME_LIMIT} giây**!"
+    )
+
+    game["timer_task"] = asyncio.create_task(
+        start_timer(channel)
+    )
+
+
+# =========================================================
+# XỬ LÝ TIN NHẮN
+# =========================================================
+
+@bot.event
+async def on_message(message):
+
+    if message.author.bot:
+        return
+
+    await bot.process_commands(message)
+
+    channel_id = message.channel.id
+
+    if channel_id not in games:
+        return
+
+    # Không xử lý slash command
+    if message.content.startswith("/"):
+        return
+
+    game = games[channel_id]
+
+    text = normalize(message.content)
+
+    parts = text.split()
+
+    # Phải có ít nhất 2 từ
+    if len(parts) < 2:
+
+        await message.channel.send(
+            f"❌ **{message.author.display_name}**, "
+            "hãy nhập ít nhất 2 từ!"
+        )
+
+        return
+
+    # =====================================================
+    # KIỂM TRA TỪ ĐẦU
+    # =====================================================
+
+    first_word = parts[0]
+
+    if first_word != game["last_word"]:
+
+        await message.channel.send(
+            f"❌ Sai rồi!\n"
+            f"Phải bắt đầu bằng **{game['last_word']}**."
+        )
+
+        return
+
+    # =====================================================
+    # KIỂM TRA TỪ ĐÃ DÙNG
+    # =====================================================
+
+    if text in game["used"]:
+
+        await message.channel.send(
+            "♻️ Cụm từ này đã được sử dụng!"
+        )
+
+        return
+
+    # =====================================================
+    # HỢP LỆ
+    # =====================================================
+
+    game["used"].add(text)
+
+    old_last = game["last_word"]
+
+    game["last_word"] = get_last_word(text)
+
+    game["current_user"] = message.author.id
+
+    # Hủy timer cũ
+    if game["timer_task"]:
+
+        game["timer_task"].cancel()
+
+    # XP
+    xp_gain = 10
+
+    add_xp(
+        message.author,
+        xp_gain
+    )
+
+    xp, wins, total_games = get_player(
+        message.author
+    )
+
+    level = get_level(xp)
+
+    await message.channel.send(
+        f"✅ **{message.author.display_name}**: "
+        f"**{text}**\n"
+        f"⭐ +{xp_gain} XP\n"
+        f"🎖️ Level: **{level}**"
+    )
+
+    # =====================================================
+    # BOT TÌM TỪ
+    # =====================================================
+
+    bot_word = find_word(
+        game["last_word"],
+        game["used"]
+    )
+
+    # Bot không còn từ
+    if bot_word is None:
+
+        add_win(message.author)
+
+        add_xp(
+            message.author,
+            50
+        )
+
+        await message.channel.send(
+            f"🏆 **{message.author.display_name} THẮNG!**\n\n"
+            "🤖 Bot không còn từ để nối.\n"
+            "🎁 Thưởng thắng: **+50 XP**"
+        )
+
+        del games[channel_id]
+
+        return
+
+    # =====================================================
+    # BOT ĐÁP
+    # =====================================================
+
+    game["used"].add(bot_word)
+
+    game["last_word"] = get_last_word(
+        bot_word
+    )
+
+    await message.channel.send(
+        f"🤖 **Bot:** {bot_word}\n"
+        f"👉 Từ tiếp theo: **{game['last_word']}**\n"
+        f"⏱️ **10 giây!**"
+    )
+
+    # Timer mới
+    game["timer_task"] = asyncio.create_task(
+        start_timer(message.channel)
+    )
+
+
+# =========================================================
+# /STOPNOITU
+# =========================================================
+
+@bot.tree.command(
+    name="stopnoitu",
+    description="Dừng game nối từ"
+)
+async def stopnoitu(
+    interaction: discord.Interaction
+):
+
+    channel_id = interaction.channel.id
+
+    if channel_id not in games:
+
+        await interaction.response.send_message(
+            "❌ Không có game nào đang chạy."
+        )
+
+        return
+
+    game = games[channel_id]
+
+    if game["timer_task"]:
+        game["timer_task"].cancel()
+
+    del games[channel_id]
+
+    await interaction.response.send_message(
+        "🛑 **Game đã kết thúc!**"
+    )
+
+
+# =========================================================
+# /DIEM
+# =========================================================
+
+@bot.tree.command(
+    name="diem",
+    description="Xem XP và level của bạn"
+)
+async def diem(interaction: discord.Interaction):
+
+    xp, wins, games_played = get_player(
+        interaction.user
+    )
+
+    level = get_level(xp)
+
+    next_level = get_xp_to_next_level(xp)
+
+    embed = discord.Embed(
+        title="📊 THÔNG TIN NGƯỜI CHƠI",
+        description=(
+            f"👤 **{interaction.user.display_name}**"
+        )
+    )
+
+    embed.add_field(
+        name="🎖️ Level",
+        value=f"**{level}**"
+    )
+
+    embed.add_field(
+        name="⭐ XP",
+        value=f"**{xp} XP**"
+    )
+
+    embed.add_field(
+        name="📈 Còn cần",
+        value=f"**{next_level} XP**"
+    )
+
+    embed.add_field(
+        name="🏆 Số trận thắng",
+        value=f"**{wins}**"
+    )
+
+    embed.add_field(
+        name="🎮 Số trận",
+        value=f"**{games_played}**"
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================================================
+# /TOP
+# =========================================================
+
+@bot.tree.command(
+    name="top",
+    description="Xem bảng xếp hạng nối từ"
+)
+async def top(interaction: discord.Interaction):
+
+    cursor.execute(
+        """
+        SELECT name, xp, wins
+        FROM players
+        ORDER BY xp DESC
+        LIMIT 10
+        """
+    )
+
+    players = cursor.fetchall()
+
+    if not players:
+
+        await interaction.response.send_message(
+            "📊 Chưa có dữ liệu."
+        )
+
+        return
+
+    medals = [
+        "🥇",
+        "🥈",
+        "🥉"
+    ]
+
+    lines = []
+
+    for i, player in enumerate(players):
+
+        name, xp, wins = player
+
+        medal = (
+            medals[i]
+            if i < 3
+            else f"**{i + 1}.**"
+        )
+
+        level = get_level(xp)
+
+        lines.append(
+            f"{medal} **{name}** — "
+            f"Level {level} — "
+            f"{xp} XP — "
+            f"{wins} 🏆"
+        )
+
+    embed = discord.Embed(
+        title="🏆 TOP 10 NỐI TỪ",
+        description="\n".join(lines)
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================================================
+# RUN
+# =========================================================
+
+if not TOKEN:
+
+    print(
+        "❌ Chưa có DISCORD_TOKEN."
+    )
+
+else:
+
+    bot.run(TOKEN)

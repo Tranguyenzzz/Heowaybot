@@ -1,0 +1,41 @@
+import itertools
+
+# Danh sách từ vựng tiếng Việt phong phú để ghép thành cụm 2 từ
+base_words = [
+    "học", "sinh", "tập", "trường", "lớp", "bạn", "thầy", "cô", "sách", "vở",
+    "bút", "mực", "kéo", "giấy", "thước", "bàn", "ghế", "phòng", "nhà", "cửa",
+    "sân", "vườn", "hoa", "cây", "lá", "cành", "quả", "trái", "nước", "mây",
+    "trời", "đất", "núi", "sông", "biển", "đảo", "rừng", "đá", "cát", "nắng",
+    "mưa", "gió", "bão", "sương", "tuyết", "đêm", "ngày", "sáng", "trưa", "chiều",
+    "tối", "xuân", "hạ", "thu", "đông", "yêu", "thương", "quý", "mến", "nhớ",
+    "mong", "chờ", "đợi", "vui", "buồn", "cười", "khóc", "hát", "múa", "đàn",
+    "sáo", "tranh", "ảnh", "phim", "ảnh", "sao", "trăng", "sông", "ngựa", "xe",
+    "pháo", "thuyền", "tàu", "máy", "bay", "đường", "xá", "phố", "chợ", "làng",
+    "quê", "hương", "đất", "nước", "Tổ", "quốc", "dân", "tộc", "con", "người",
+    "anh", "em", "ông", "bà", "cha", "mẹ", "chú", "bác", "cô", "dì", "cậu",
+    "mới", "cũ", "đẹp", "xấu", "cao", "thấp", "dài", "ngắn", "rộng", "hẹp",
+    "to", "nhỏ", "lớn", "bé", "nhanh", "chậm", "mạnh", "yếu", "sáng", "tối",
+    "nóng", "lạnh", "ấm", "mát", "ngọt", "đắng", "chua", "cay", "mặn", "nhạt",
+    "đỏ", "cam", "vàng", "lục", "lam", "chàm", "tím", "trắng", "đen", "xám",
+    "kinh", "tế", "xã", "hội", "văn", "hóa", "khoa", "học", "kỹ", "thuật",
+    "công", "nghệ", "thông", "tin", "máy", "tính", "mạng", "dữ", "liệu", "phần",
+    "mềm", "mã", "nguồn", "lập", "trình", "phát", "triển", "sáng", "tạo", "đổi",
+    "thành", "công", "thất", "bại", "cố", "gắng", "nỗ", "lực", "vươn", "lên",
+    "tương", "lai", "quá", "khứ", "hiện", "tại", "thời", "gian", "không", "gian",
+    "thành", "phố", "nông", "thôn", "miền", "núi", "đồng", "bằng", "hải", "đảo"
+]
+
+# Tạo các cụm 2 từ phong phú
+generated_words = set()
+
+# Thêm ghép cặp cơ bản
+for w1, w2 in itertools.product(base_words, repeat=2):
+    if w1 != w2:
+        generated_words.add(f"{w1} {w2}".lower())
+
+# Ghi ra file noitu_words.txt
+with open("noitu_words.txt", "w", encoding="utf-8") as f:
+    for word in sorted(generated_words):
+        f.write(word + "\n")
+
+print(f"✅ Đã tạo thành công 'noitu_words.txt' với {len(generated_words)} từ nối!")

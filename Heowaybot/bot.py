@@ -2,7 +2,29 @@ import discord
 from discord.ext import commands
 import random
 import sqlite3
+import os
+from threading import Thread
+from flask import Flask
 
+app = Flask('')
+
+
+@app.route('/')
+def home():
+  return 'Bot online!'
+
+
+def run():
+  port = int(os.environ.get('PORT', 8080))
+  app.run(host='0.0.0.0', port=port)
+
+
+def keep_alive():
+  t = Thread(target=run)
+  t.start()
+
+
+keep_alive()
 # =========================================================
 # KHỞI TẠO BOT & INTENTS
 # =========================================================
@@ -213,4 +235,5 @@ async def top(interaction: discord.Interaction):
 # CHẠY BOT (Thay TOKEN của bạn vào đây)
 # =========================================================
 import os
+keep_alive()
 bot.run(os.getenv("BOT_TOKEN"))
